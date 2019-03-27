@@ -1,0 +1,101 @@
+---
+# as SSH login by root or by password in general are both disabled (see tasks in
+# ../../common/tasks/sshd.yml), the following password is set only for emergency
+# access to the console (e.g. via Linode web UI)
+- name: set password for root user (at console)
+  user:
+    name: root
+    password: "{{ root_console_password | password_hash('sha512', root_console_password_salt) }}"
+
+# based on https://serverfault.com/a/913211/319087
+- name: Create developers group
+  group:
+    name: developers
+    state: present
+
+- name: Create users and add to developers and maybe sudo groups
+  user:
+    name: "{{ item.username }}"
+    shell: /bin/bash
+    # this groups: attribute will replace any existing groups for the user
+    groups: "{{ item.extra_groups }}, developers{{', sudo' if (item.username in sudoers) else '' }}"
+  with_items: "{{ users }}"
+
+- name: Get list of users currently in developers group
+  shell: 'grep developers /etc/group | cut -d: -f4 | tr "," "\n"'
+  changed_when: false
+  register: existing_users
+
+- name: Determine removed users
+  set_fact:
+    users_to_remove: "{{ existing_users.stdout_lines | difference(users | map(attribute='username') | list) }}"
+
+- name: Delete removed user accounts
+  user:
+    name: "{{ item }}"
+    state: absent
+  with_items: "{{ users_to_remove }}"
+
+- name: Allow passwordless sudo for members of sudo group
+  lineinfile:
+    path: /etc/sudoers
+    state: present
+    regexp: '^%sudo\s'
+    line: '%sudo ALL=(ALL) NOPASSWD: ALL'
+    validate: 'visudo -cf %s'
+
+# https://serverfault.com/a/118932/319087
+- name: prevent sudo from breaking ssh forwarding
+  lineinfile:
+    dest: /etc/sudoers
+    line: Defaults    env_keep+=SSH_AUTH_SOCK
+    validate: 'visudo -cf %s'
+
+- name: Add authorized keys for each user
+  authorized_key:
+    user: "{{ item.0.username }}"
+    key: "{{ item.1 }}"
+  with_subelements:
+    - "{{ users }}"
+    - pub_keys
+
+- name: make global bashrc dir
+  file:
+    state: directory
+    path: /etc/bashrc.d
+    mode: 0755
+
+- name: Copy global bashrc files
+  copy:
+    src: "{{ item }}"
+    dest: /etc/bashrc.d/
+    owner: root
+    mode: 0755
+  with_fileglob:
+    - "{{ playbook_dir }}/files/bashrc.d/*"
+
+- name: "load global files from user's bashrc"
+  blockinfile:
+    path: "/home/{{ item.username }}/.bashrc"
+    owner: "{{ item.username }}"
+    group: "{{ item.username }}"
+    mode: 0755
+    block: |
+      for file in /etc/bashrc.d/*;
+      do
+      source "$file"
+      done
+  with_items: "{{ users }}"
+
+- name: Let users add custom content to files in their home dir
+  blockinfile:
+    path: "/home/{{ item.0.username }}/{{ item.1.path }}"
+    block: "{{ item.1.content }}"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK{{ item.1.marker | default('') }}"
+    create: yes
+    owner: "{{ item.0.username }}"
+    group: "{{ item.0.username }}"
+  with_subelements:
+    - "{{ users }}"
+    - custom_content
+    - skip_missing: yes
