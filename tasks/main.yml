@@ -7,12 +7,13 @@
     name: root
     password: "{{ root_console_password | password_hash('sha512', root_console_password_salt) }}"
 
-# based on https://serverfault.com/a/913211/319087
-- name: Create developers group
+- name: Create developers plus any extra groups
   group:
-    name: developers
+    name: "{{ item }}"
     state: present
+  with_items: "{{ base_groups }} + [ 'developers' ]"
 
+# based on https://serverfault.com/a/913211/319087
 - name: Create users and add to developers and maybe sudo groups
   user:
     name: "{{ item.username }}"
@@ -22,19 +23,28 @@
   with_items: "{{ users }}"
 
 - name: Get list of users currently in developers group
-  shell: 'grep developers /etc/group | cut -d: -f4 | tr "," "\n"'
+  shell: |
+    set -o pipefail
+    grep developers /etc/group |
+    cut -d: -f4 |
+    tr "," "\n"
   changed_when: false
   register: existing_users
+  args:
+    # for pipefail info, see https://github.com/ansible/ansible-lint/issues/497#issuecomment-477141267
+    executable: /bin/bash
 
 - name: Determine removed users
   set_fact:
     users_to_remove: "{{ existing_users.stdout_lines | difference(users | map(attribute='username') | list) }}"
+  when: existing_users.stdout_lines is defined
 
 - name: Delete removed user accounts
   user:
     name: "{{ item }}"
     state: absent
   with_items: "{{ users_to_remove }}"
+  when: users_to_remove is defined
 
 - name: Allow passwordless sudo for members of sudo group
   lineinfile:
@@ -54,7 +64,7 @@
 - name: Add authorized keys for each user
   authorized_key:
     user: "{{ item.0.username }}"
-    key: "{{ item.1 }}"
+    key: "{{ lookup('file', '{{ playbook_dir }}/files/{{ item.0.username }}/{{ item.1 }}') }}"
   with_subelements:
     - "{{ users }}"
     - pub_keys
@@ -73,6 +83,22 @@
     mode: 0755
   with_fileglob:
     - "{{ playbook_dir }}/files/bashrc.d/*"
+
+- name: ensure directories for custom files exist
+  file:
+    state: directory
+    path: "/home/{{ item.0.username }}/{{ item.1 | dirname }}"
+    owner: "{{ item.0.username }}"
+    group: "{{ item.0.username }}"
+  loop: "{{ users | subelements('custom_homedir_files', 'skip_missing=False') }}"
+
+- name: copy custom files from user's file in playbook_dir
+  copy:
+    src: "{{ playbook_dir }}/files/{{ item.0.username }}/{{ item.1 }}"
+    dest: "/home/{{ item.0.username }}/{{ item.1 }}"
+    owner: "{{ item.0.username }}"
+    group: "{{ item.0.username }}"
+  loop: "{{ users | subelements('custom_homedir_files', 'skip_missing=False') }}"
 
 - name: "load global files from user's bashrc"
   blockinfile:
@@ -93,9 +119,18 @@
     block: "{{ item.1.content }}"
     marker: "# {mark} ANSIBLE MANAGED BLOCK{{ item.1.marker | default('') }}"
     create: yes
-    owner: "{{ item.0.username }}"
-    group: "{{ item.0.username }}"
   with_subelements:
     - "{{ users }}"
-    - custom_content
+    - custom_homedir_content
+    - skip_missing: yes
+
+- name: Fix permissions on custom content
+  file:
+    path: "/home/{{ item.0.username }}/{{ item.1.path | dirname }}"
+    owner: "{{ item.0.username }}"
+    group: "{{ item.0.username }}"
+    recurse: yes
+  with_subelements:
+    - "{{ users }}"
+    - custom_homedir_content
     - skip_missing: yes
