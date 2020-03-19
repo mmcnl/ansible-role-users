@@ -92,7 +92,7 @@
     group: "{{ item.0.username }}"
   loop: "{{ users | subelements('custom_homedir_files', 'skip_missing=False') }}"
 
-- name: copy custom files from user's file in playbook_dir
+- name: copy user files from playbook_dir to user home dir
   copy:
     src: "{{ playbook_dir }}/files/{{ item.0.username }}/{{ item.1 }}"
     dest: "/home/{{ item.0.username }}/{{ item.1 }}"
