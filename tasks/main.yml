@@ -69,21 +69,6 @@
     - "{{ users }}"
     - pub_keys
 
-- name: make global bashrc dir
-  file:
-    state: directory
-    path: /etc/bashrc.d
-    mode: 0755
-
-- name: Copy global bashrc files
-  copy:
-    src: "{{ item }}"
-    dest: /etc/bashrc.d/
-    owner: root
-    mode: 0755
-  with_fileglob:
-    - "{{ playbook_dir }}/files/bashrc.d/*"
-
 - name: ensure directories for custom files exist
   file:
     state: directory
