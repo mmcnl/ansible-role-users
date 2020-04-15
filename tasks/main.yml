@@ -119,3 +119,4 @@
     - "{{ users }}"
     - custom_homedir_content
     - skip_missing: yes
+  changed_when: false
