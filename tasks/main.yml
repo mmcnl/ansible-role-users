@@ -64,7 +64,7 @@
 - name: Add authorized keys for each user
   authorized_key:
     user: "{{ item.0.username }}"
-    key: "{{ lookup('file', '{{ playbook_dir }}/files/{{ item.0.username }}/{{ item.1 }}') }}"
+    key: "{{ lookup('file', '{{ playbook_dir }}/files/users/{{ item.0.username }}/{{ item.1 }}') }}"
   with_subelements:
     - "{{ users }}"
     - pub_keys
@@ -79,7 +79,7 @@
 
 - name: copy user files from playbook_dir to user home dir
   copy:
-    src: "{{ playbook_dir }}/files/{{ item.0.username }}/{{ item.1 }}"
+    src: "{{ playbook_dir }}/files/users/{{ item.0.username }}/{{ item.1 }}"
     dest: "/home/{{ item.0.username }}/{{ item.1 }}"
     owner: "{{ item.0.username }}"
     group: "{{ item.0.username }}"
